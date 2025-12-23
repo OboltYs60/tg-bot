@@ -1,0 +1,88 @@
+import logging
+from telegram import Update, ReplyKeyboardRemove, ReplyKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+import datetime
+import os
+
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+TOKEN = '8297036965:AAEjcHImFPChMUeRBGB-zbvIyqh5-QQHaYA' 
+LOGINS_FILE = 'Чупин И  жигалов '
+PHOTO = 'kot.jpg'
+AUDIO = 'kisi-kisi-miau-miau-vasilisa.mp3'
+def userId(user_id, username):
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_entry = f"[{timestamp}] ID={user_id}, Username={username}\n"
+
+    try:
+        with open(LOGINS_FILE, 'a', encoding='utf-8') as f:
+            f.write(log_entry)
+    except Exception as e:
+        logger.error(f"Ошибка записи в файл {LOGINS_FILE}: {e}")
+
+save_user_to_file = userId
+
+async def pomogi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    username = update.effective_user.username or f"User_{user_id}"
+    save_user_to_file(user_id, username)
+
+    reply_keyboard = [
+        ["Телефоны", "Адрес"],
+        ["Сайт", "Цены"],
+    ]
+    reply_markup = ReplyKeyboardMarkup(
+        reply_keyboard, resize_keyboard=True, one_time_keyboard=True
+    )
+
+    await update.message.reply_text("Выберите, что вас интересует:", reply_markup=reply_markup)
+
+async def user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    username = update.effective_user.username or f"User_{user_id}"
+    save_user_to_file(user_id, username)
+
+    text = update.message.text
+    response = None
+    if text == "Телефоны":
+        response = "Приемная директора: +7(3412)370288\nПриемная комиссия: +7(3412)370488\nБухгалтерия:+7(3412)37-05-00\nОчное отделение:+7(3412)37-02-00\nЗаочное отделение:+7(3412)37-02-77\nОбщежитие:+7(3412)37-04-88"
+    elif text == "Адрес":
+        response = "Российская Федерация, Удмуртская Республика, город Ижевск, ул. Молодёжная, д. 109"
+    elif text == "Сайт":
+        response = "koopteh.ru"
+    elif text == "Цены":
+        response = "koopteh.ru"
+    
+    if response:
+        await update.message.reply_text(response, reply_markup=ReplyKeyboardRemove())
+
+
+async def photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if os.path.exists(PHOTO):
+        with open(PHOTO, 'rb') as f:
+            await update.message.reply_photo(f)
+
+async def audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if os.path.exists(AUDIO):
+        with open(AUDIO, 'rb') as f:
+            await update.message.reply_audio(f)
+
+async def grade_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Чупин и Жигалов")
+
+def main():
+    application = Application.builder().token(TOKEN).build()
+
+    application.add_handler(CommandHandler("pomogi", pomogi))
+    
+    application.add_handler(MessageHandler(filters.TEXT & filters.Regex("(?i)^кот$"), photo))
+    application.add_handler(MessageHandler(filters.TEXT & filters.Regex("(?i)^мяу$"), audio))
+    application.add_handler(MessageHandler(filters.TEXT & filters.Regex("(?i)^оценка$"), grade_info))
+    
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, user))
+
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+if __name__ == '__main__':
+    main()
