@@ -7,3 +7,4 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 import datetime
 import os
 
+![Uploading diagram.png…]()
