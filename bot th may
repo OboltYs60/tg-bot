@@ -1,45 +1,49 @@
 import logging
-import requests
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+import aiohttp
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+import asyncio
 
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
-logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
-TOKEN = ''
+API_TOKEN = '8297036965:AAEjcHImFPChMUeRBGB-zbvIyqh5-QQHaYA'
+bot = Bot(token=API_TOKEN)
+dp = Dispatcher()
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    await update.message.reply_html(rf"Привет, {user.mention_html()}.")
+FORTNITE_API_URL = "68fb7e31-7947-4a83-b072-79556c411dc4"
 
-async def show_fortnite_store(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def get_shop_image():
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(FORTNITE_API_URL) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    image_url = data.get('data', {}).get('image')
+                    return image_url
+                else:
+                    return None
+        except Exception as e:
+            logging.error(f"Ошибка при запросе к API: {e}")
+            return None
+
+@dp.message(Command("store"))
+async def cmd_store(message: types.Message):
+    image_url = await get_shop_image()
+    
+    if image_url:
+        await message.answer_photo(
+            photo=image_url,
+            caption="Актуальный магазин предметов Fortnite 🛒"
+        )
+    else:
+        await message.answer("К сожалению, не удалось получить данные о магазине. Попробуйте позже.")
+
+async def main():
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
     try:
-        response = requests.get("https://fortnite-api.com/v2/shop/br/combined")
-        if response.status_code != 200:
-            raise Exception("не робит магазин!")
-        
-        data = response.json()['featured'][:5]
-        message = "<b>Магазин Fortnite:</b>\n\n"
-        for entry in data:
-            item = entry['items'][0]
-            name = item['name']
-            price = f"{entry['finalPrice']} V-Bucks"
-            rarity = item['rarity']['displayValue']
-            
-            message += f"<b>{name}</b>\nЦена: {price}\nРедкость: {rarity}\n\n"
-        
-        await update.message.reply_html(message)
-    except Exception as e:
-        logger.error(e)
-        await update.message.reply_text("о ноу.")
-
-def main() -> None:
-    application = ApplicationBuilder().token(TOKEN).build()
-
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("store", show_fortnite_store))
-
-    application.run_polling()
-
-if __name__ == '__main__':
-    main()
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Бот выключен")
