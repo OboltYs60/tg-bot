@@ -7,11 +7,11 @@ import asyncio
 
 logging.basicConfig(level=logging.INFO)
 
-API_TOKEN = '8297036965:AAEjcHImFPChMUeRBGB-zbvIyqh5-QQHaYA'
+API_TOKEN = ''
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
-FORTNITE_API_URL = "68fb7e31-7947-4a83-b072-79556c411dc4"
+FORTNITE_API_URL = ""
 
 async def get_shop_image():
     async with aiohttp.ClientSession() as session:
