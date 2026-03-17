@@ -1,0 +1,377 @@
+import requests
+import sqlite3
+from datetime import datetime
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
+
+TOKEN = "TOKEN"
+STEAM_API_KEY = "DB108D473EC477C978608092862AFC39"
+
+user_games_cache = {}
+
+def init_database():
+    conn = sqlite3.connect('steam_bot.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS users
+                 (user_id INTEGER PRIMARY KEY, steam_id TEXT)''')
+    conn.commit()
+    conn.close()
+
+def save_steam_id(user_id, steam_id):
+    conn = sqlite3.connect('steam_bot.db')
+    c = conn.cursor()
+    c.execute("INSERT OR REPLACE INTO users (user_id, steam_id) VALUES (?, ?)", (user_id, steam_id))
+    conn.commit()
+    conn.close()
+
+def get_steam_id(user_id):
+    conn = sqlite3.connect('steam_bot.db')
+    c = conn.cursor()
+    c.execute("SELECT steam_id FROM users WHERE user_id = ?", (user_id,))
+    result = c.fetchone()
+    conn.close()
+    return result[0] if result else None
+
+def get_steam_id_from_custom(custom_url):
+    try:
+        if custom_url.isdigit() and len(custom_url) > 10:
+            return custom_url, None
+        
+        url = "https://api.steampowered.com/ISteamUser/ResolveVanityURL/v1/"
+        params = {'key': STEAM_API_KEY, 'vanityurl': custom_url}
+        response = requests.get(url, params=params, timeout=10)
+        data = response.json()
+        
+        if data['response']['success'] == 1:
+            return data['response']['steamid'], None
+        return None, "Пользователь не найден"
+    except:
+        return None, "Ошибка подключения"
+
+def get_player_summary(steam_id):
+    try:
+        url = "https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/"
+        params = {'key': STEAM_API_KEY, 'steamids': steam_id}
+        response = requests.get(url, params=params, timeout=10)
+        data = response.json()
+        
+        player = data['response']['players'][0]
+        created = "Неизвестно"
+        if 'timecreated' in player:
+            created = datetime.fromtimestamp(player['timecreated']).strftime("%d.%m.%Y")
+        
+        states = {0: '⚫ Не в сети', 1: '🟢 В сети', 4: '🎮 В игре'}
+        state = states.get(player['personastate'], '⚫ Не в сети')
+        game = player.get('gameextrainfo', '')
+        
+        return {
+            'name': player['personaname'],
+            'created': created,
+            'state': state,
+            'game': game
+        }
+    except:
+        return None
+
+def get_player_games(steam_id):
+    try:
+        url = "https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/"
+        params = {
+            'key': STEAM_API_KEY,
+            'steamid': steam_id,
+            'include_appinfo': 1,
+            'include_played_free_games': 1,
+            'format': 'json'
+        }
+        response = requests.get(url, params=params, timeout=15)
+        data = response.json()
+        
+        games = []
+        if 'response' in data and 'games' in data['response']:
+            for game in data['response']['games']:
+                name = game.get('name', 'Без названия')
+                hours = game.get('playtime_forever', 0) / 60
+                if hours > 0:
+                    games.append({'name': name, 'hours': round(hours, 1)})
+        return games[:50]
+    except:
+        return []
+
+def calculate_account_value(steam_id):
+    try:
+        url = "https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/"
+        params = {
+            'key': STEAM_API_KEY,
+            'steamid': steam_id,
+            'include_appinfo': 1,
+            'format': 'json'
+        }
+        response = requests.get(url, params=params, timeout=15)
+        data = response.json()
+        
+        if 'response' not in data or 'games' not in data['response']:
+            return None, "Не удалось получить список игр"
+            
+        games = data['response']['games']
+        total_value = 0
+        expensive = []
+        
+        for game in games[:15]:
+            app_id = game.get('appid')
+            store_url = f"https://store.steampowered.com/api/appdetails?appids={app_id}&cc=ru"
+            try:
+                store_response = requests.get(store_url, timeout=5)
+                store_data = store_response.json()
+                if store_data.get(str(app_id), {}).get('success'):
+                    game_data = store_data[str(app_id)]['data']
+                    price_info = game_data.get('price_overview', {})
+                    if price_info:
+                        price = price_info.get('final', 0) / 100
+                        if price > 0:
+                            total_value += price
+                            expensive.append({
+                                'name': game_data.get('name', 'Неизвестно'),
+                                'price': price
+                            })
+            except:
+                continue
+                
+        expensive.sort(key=lambda x: x['price'], reverse=True)
+        return {
+            'total': round(total_value, 2),
+            'total_games': len(games),
+            'expensive': expensive[:5]
+        }, None
+    except:
+        return None, "Ошибка расчета"
+
+def get_free_games():
+    """Актуальные бесплатные игры на 17 марта 2026"""
+    return [
+        {
+            "title": "Cozy Grove",
+            "until": "19 марта 2026",
+            "url": "https://store.epicgames.com/p/cozy-grove",
+            "days_left": 2
+        },
+        {
+            "title": "Isonzo",
+            "until": "19 марта 2026",
+            "url": "https://store.epicgames.com/p/isonzo",
+            "days_left": 2
+        }
+    ]
+
+def get_top_games():
+    """Популярные игры в Steam на март 2026"""
+    return [
+        {"name": "Counter-Strike 2", "players": "1.2M", "trend": "⚡"},
+        {"name": "Dota 2", "players": "820K", "trend": "⚡"},
+        {"name": "Slay the Spire 2", "players": "430K", "trend": "📈"},
+        {"name": "PUBG", "players": "480K", "trend": "⚡"},
+        {"name": "Apex Legends", "players": "350K", "trend": "⚡"},
+        {"name": "Resident Evil Requiem", "players": "210K", "trend": "🔥"},
+        {"name": "Marathon", "players": "143K", "trend": "🚀"},
+        {"name": "Baldur's Gate 3", "players": "120K", "trend": "✨"},
+        {"name": "Crimson Desert", "players": "95K", "trend": "✨"},
+        {"name": "Rust", "players": "85K", "trend": "⚡"}
+    ]
+
+def get_main_keyboard():
+    return ReplyKeyboardMarkup([
+        ["👤 Мой профиль", "🎮 Мои игры"],
+        ["💰 Стоимость", "🎁 Бесплатные игры"],
+        ["🔥 Популярное", "ℹ️ Помощь"]
+    ], resize_keyboard=True)
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    saved = get_steam_id(user_id)
+    text = (
+        "🎮 **Steam Game Assistant**\n\n"
+        "👤 **Мой профиль** — информация об аккаунте\n"
+        "🎮 **Мои игры** — список игр с часами\n"
+        "💰 **Стоимость** — стоимость аккаунта\n"
+        "🎁 **Бесплатные игры** — что раздают в Epic\n"
+        "🔥 **Популярное** — топ игр в Steam\n"
+    )
+    if saved:
+        text += f"\n✅ Steam ID сохранен"
+    else:
+        text += "\n❌ Сохрани Steam ID через 👤 Мой профиль"
+    await update.message.reply_text(text, reply_markup=get_main_keyboard(), parse_mode='Markdown')
+
+async def my_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    saved = get_steam_id(user_id)
+    if saved:
+        await show_profile(update, context, saved)
+    else:
+        context.user_data['waiting'] = 'steam_id'
+        await update.message.reply_text("🔍 Введи свой Steam ID или ник:")
+
+async def save_steam_id(update: Update, context: ContextTypes.DEFAULT_TYPE, identifier):
+    user_id = update.effective_user.id
+    steam_id, error = get_steam_id_from_custom(identifier)
+    if not steam_id:
+        await update.message.reply_text(f"❌ {error}")
+        return
+    save_steam_id(user_id, steam_id)
+    await update.message.reply_text("✅ Steam ID сохранен!")
+
+async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE, identifier):
+    msg = await update.message.reply_text("🔍 Поиск...")
+    
+    steam_id, error = get_steam_id_from_custom(identifier)
+    if not steam_id:
+        await msg.edit_text(f"❌ {error}")
+        return
+    
+    profile = get_player_summary(steam_id)
+    if not profile:
+        await msg.edit_text("❌ Не удалось получить профиль")
+        return
+    
+    text = f"📊 **Steam профиль**\n\n👤 **Ник:** {profile['name']}\n🆔 `{steam_id}`\n📅 Создан: {profile['created']}\n📶 {profile['state']}"
+    if profile['game']:
+        text += f"\n🎮 Играет: {profile['game']}"
+    
+    await msg.edit_text(text, parse_mode='Markdown')
+
+async def my_games(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    steam_id = get_steam_id(user_id)
+    
+    if not steam_id:
+        context.user_data['waiting'] = 'steam_id'
+        await update.message.reply_text("❌ Сначала сохрани Steam ID")
+        return
+    
+    msg = await update.message.reply_text("🎮 Загрузка...")
+    games = get_player_games(steam_id)
+    
+    if not games:
+        await msg.edit_text("❌ Нет игр или профиль скрыт")
+        return
+    
+    user_games_cache[user_id] = games
+    await show_games_page(update, context, user_id, 1)
+
+async def show_games_page(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id, page):
+    games = user_games_cache.get(user_id, [])
+    if not games:
+        return
+    
+    total = len(games)
+    pages = (total + 9) // 10
+    start = (page - 1) * 10
+    end = min(start + 10, total)
+    
+    text = f"🎮 **Страница {page}/{pages}**\n\n"
+    total_hours = 0
+    
+    for i, game in enumerate(games[start:end], start+1):
+        text += f"{i}. **{game['name']}** — {game['hours']} ч\n"
+        total_hours += game['hours']
+    
+    text += f"\n📊 Всего: {round(total_hours, 1)} ч"
+    
+    keyboard = []
+    buttons = []
+    if page > 1:
+        buttons.append(InlineKeyboardButton("◀️", callback_data=f"page_{user_id}_{page-1}"))
+    if page < pages:
+        buttons.append(InlineKeyboardButton("▶️", callback_data=f"page_{user_id}_{page+1}"))
+    if buttons:
+        keyboard.append(buttons)
+    
+    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+    
+    if update.callback_query:
+        await update.callback_query.message.edit_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+    else:
+        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+
+async def account_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    steam_id = get_steam_id(user_id)
+    
+    if not steam_id:
+        await update.message.reply_text("❌ Сначала сохрани Steam ID")
+        return
+    
+    msg = await update.message.reply_text("💰 Считаю...")
+    data, error = calculate_account_value(steam_id)
+    
+    if not data:
+        await msg.edit_text(f"❌ {error}")
+        return
+    
+    text = f"💰 **Стоимость аккаунта**\n\n📊 **{data['total']}₽**\n\n💎 **Самые дорогие:**\n"
+    for game in data['expensive']:
+        text += f"• {game['name']} — {game['price']}₽\n"
+    
+    await msg.edit_text(text, parse_mode='Markdown')
+
+async def free_games(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    games = get_free_games()
+    
+    text = "🎁 **Бесплатно в Epic Games**\n\n"
+    for game in games:
+        text += f"• **{game['title']}**\n"
+        text += f"  ⏰ До {game['until']} (осталось {game['days_left']} дн.)\n"
+        text += f"  [🔗 Забрать]({game['url']})\n\n"
+    
+    await update.message.reply_text(text, parse_mode='Markdown', disable_web_page_preview=True)
+
+async def popular(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    games = get_top_games()
+    text = "🔥 **Популярные игры**\n\n"
+    for i, game in enumerate(games, 1):
+        text += f"{i}. {game['trend']} **{game['name']}** — {game['players']} игроков\n"
+    await update.message.reply_text(text, parse_mode='Markdown')
+
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    if data.startswith("page_"):
+        parts = data.split("_")
+        user_id = int(parts[1])
+        page = int(parts[2])
+        await show_games_page(update, context, user_id, page)
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    
+    if text == "👤 Мой профиль":
+        await my_profile(update, context)
+    elif text == "🎮 Мои игры":
+        await my_games(update, context)
+    elif text == "💰 Стоимость":
+        await account_value(update, context)
+    elif text == "🎁 Бесплатные игры":
+        await free_games(update, context)
+    elif text == "🔥 Популярное":
+        await popular(update, context)
+    elif text == "ℹ️ Помощь":
+        await start(update, context)
+    else:
+        if context.user_data.get('waiting') == 'steam_id':
+            await save_steam_id(update, context, text)
+            context.user_data['waiting'] = None
+        else:
+            await show_profile(update, context, text)
+
+def main():
+    init_database()
+    app = Application.builder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(handle_callback))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    print("✅ Бот запущен!")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
