@@ -1,9 +1,9 @@
-tg bot 
-Это только начало....
-ЗАВИСИМОСТИ
-import logging
-import aiohttp
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-import asyncio
+Telegram бот для анализа Steam профилей, игр и их стоимости.
+
+# Возможности
+
+Информация о Steam аккаунте 
+Список игр с количеством часов (пагинация) 
+Примерная стоимость всех игр 
+Актуальные раздачи в Epic Games 
+Топ игр по онлайну в Steam 
