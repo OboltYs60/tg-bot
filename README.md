@@ -7,3 +7,7 @@ Telegram бот для анализа Steam профилей, игр и их с�
 Примерная стоимость всех игр 
 Актуальные раздачи в Epic Games 
 Топ игр по онлайну в Steam 
+
+#Установка
+
+pip install python-telegram-bot==20.7 requests==2.31.0 feedparser==6.0.10
